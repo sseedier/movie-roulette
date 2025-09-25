@@ -1,0 +1,197 @@
+﻿<!DOCTYPE html>
+
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rae's lil movie roulette</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+</head>
+<body class="min-h-screen bg-gray-50 text-pink-900">
+    <div class="max-w-3xl mx-auto p-6">
+        <header class="mb-6">
+            <h1 class="text-3xl font-bold">🎬 Rae's film roulette</h1>
+            <p class="text-sm text-gray-600 mt-2">Upload a CSV file of film titles (either a single column of titles, or include a header and choose the column). Then get a random pick.</p>
+        </header>
+
+        <section class="bg-white rounded-2xl shadow p-5 space-y-4">
+            <div>
+                <label class="block text-sm font-medium mb-1">1) Upload file here, ok? (CSV)</label>
+                <input id="fileInput" type="file" accept=".csv" class="block w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100" />
+                <p class="text-xs text-gray-500 mt-2">o_o: UTF-8 CSV works best. If you have multiple columns, make sure the first row has headers.</p>
+            </div>
+
+            <div class="flex flex-wrap gap-3">
+                <button id="pickBtn" disabled class="rounded-xl px-4 py-2 bg-gray-200 text-gray-500 cursor-not-allowed">🎲 Pick Random Movie</button>
+                <button id="clearBtn" class="rounded-xl px-4 py-2 border border-gray-300 hover:bg-gray-50">Clear</button>
+            </div>
+
+
+            <div id="resultCard" class="hidden border rounded-2xl p-5">
+                <h2 class="text-lg font-semibold mb-2">Your pick</h2>
+                <p id="result" class="text-2xl font-bold"></p>
+                <p id="meta" class="text-sm text-gray-500 mt-2"></p>
+                <div class="mt-4 flex gap-2">
+                    <button id="removeBtn" class="rounded-xl px-3 py-2 border border-red-300 text-red-700 hover:bg-red-50">Remove from pool</button>
+                    <button id="againBtn" class="rounded-xl px-3 py-2 bg-indigo-600 text-white hover:bg-indigo-700">Pick Again</button>
+                </div>
+            </div>
+
+
+            <details class="mt-4">
+                <summary class="cursor-pointer text-sm text-gray-700">Advanced options</summary>
+                <div class="mt-3 grid gap-3 md:grid-cols-2">
+                    <label class="flex items-center gap-2 text-sm"><input id="dedupe" type="checkbox" class="rounded" checked> Skip empty/duplicate rows</label>
+                    <label class="flex items-center gap-2 text-sm"><input id="shuffleOnLoad" type="checkbox" class="rounded" checked> Shuffle list on load</label>
+                </div>
+            </details>
+
+
+            <div id="count" class="text-sm text-gray-600"></div>
+        </section>
+
+
+        <footer class="mt-6 text-xs text-gray-500">I eat film nerds.</footer>
+    </div>
+
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const pickBtn = document.getElementById('pickBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const againBtn = document.getElementById('againBtn');
+        const removeBtn = document.getElementById('removeBtn');
+        const resultCard = document.getElementById('resultCard');
+        const resultEl = document.getElementById('result');
+        const metaEl = document.getElementById('meta');
+        const countEl = document.getElementById('count');
+        const dedupeEl = document.getElementById('dedupe');
+        const shuffleEl = document.getElementById('shuffleOnLoad');
+
+
+        let rows = []; // full rows (arrays)
+        let headers = null; // array or null
+        let pool = []; // current pool of titles
+        let chosenIndex = null;// index within pool of current pick
+
+
+        function updateCount() {
+            countEl.textContent = pool.length ? `${pool.length} title${pool.length === 1 ? '' : 's'} in pool` : '';
+        }
+
+
+        function sanitizeTitle(s) {
+            if (typeof s !== 'string') return '';
+            return s.trim().replace(/^"|"$/g, '');
+        }
+
+        function shuffle(a) {
+            const arr = a.slice();
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            return arr;
+        }
+
+
+        fileInput.addEventListener('change', () => {
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            Papa.parse(file, {
+                header: false,
+                skipEmptyLines: 'greedy',
+                complete: (results) => {
+                    rows = results.data;
+                    if (!rows.length || !Array.isArray(rows[0]) || rows[0].length === 0) {
+                        alert('No rows found in CSV.');
+                        return;
+                    }
+
+                    // drops first row if looks like a header
+                    const firstCell = (rows[0][0] || '').toString().trim().toLowerCase();
+                    if (['name', 'title', 'film', 'movie'].includes(firstCell)) {
+                        rows = rows.slice(1);
+                    }
+
+                    // builds name, year from first two columns
+                    const items = rows.map(r => ({
+                        name: (r[0] || '').toString().trim(),
+                        year: (r[1] || '').toString().trim()
+                    })).filter(it => it.name !== '');
+
+                    // dedupe by name n year if enabled
+                    let uniqueItems = items;
+                    if (dedupeEl.checked) {
+                        const seen = new Set();
+                        uniqueItems = items.filter(it => {
+                            const key = `${it.name}||${it.year}`;
+                            if (seen.has(key)) return false;
+                            seen.add(key);
+                            return true;
+                        });
+                    }
+
+                    pool = shuffleEl.checked ? shuffle(uniqueItems) : uniqueItems;
+
+                    //  no UI 
+                    pickBtn.disabled = pool.length === 0;
+                    pickBtn.className = pool.length
+                        ? 'rounded-xl px-4 py-2 bg-indigo-600 text-white hover:bg-indigo-700'
+                        : 'rounded-xl px-4 py-2 bg-gray-200 text-gray-500 cursor-not-allowed';
+
+                    resultCard.classList.add('hidden');
+                    chosenIndex = null;
+                    updateCount();
+                },
+                error: (e) => alert('Error parsing CSV: ' + (e && e.message ? e.message : e))
+            });
+        });
+
+
+        pickBtn.addEventListener('click', () => {
+            if (!pool.length) return;
+            chosenIndex = Math.floor(Math.random() * pool.length);
+            const item = pool[chosenIndex];
+            const display = item.year ? `${item.name} (${item.year})` : item.name;
+            resultEl.textContent = display;
+            metaEl.textContent = 'from list';
+            resultCard.classList.remove('hidden');
+        });
+
+
+
+        againBtn.addEventListener('click', () => {
+            // pick again without removing current one
+            pickBtn.click();
+        });
+
+
+        removeBtn.addEventListener('click', () => {
+            if (chosenIndex == null) return;
+            pool.splice(chosenIndex, 1);
+            chosenIndex = null;
+            updateCount();
+            if (!pool.length) {
+                resultEl.textContent = 'Pool is empty';
+                pickBtn.disabled = true;
+                pickBtn.className = 'rounded-xl px-4 py-2 bg-gray-200 text-gray-500 cursor-not-allowed';
+            } else {
+                pickBtn.click();
+            }
+        });
+
+
+        clearBtn.addEventListener('click', () => {
+            fileInput.value = '';
+            resultCard.classList.add('hidden');
+            rows = []; headers = null; pool = []; chosenIndex = null;
+            pickBtn.disabled = true;
+            pickBtn.className = 'rounded-xl px-4 py-2 bg-gray-200 text-gray-500 cursor-not-allowed';
+            updateCount();
+        });
+    </script>
+</body>
+</html>
